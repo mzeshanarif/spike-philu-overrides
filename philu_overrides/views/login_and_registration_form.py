@@ -3,7 +3,7 @@
 @require_http_methods(['GET'])
 @ensure_csrf_cookie
 @xframe_allow_whitelisted
-def login_and_registration_form(request, initial_mode="login"):
+def login_and_registration_form(request, initial_mode="login", org_name=None, admin_email=None):
     """Render the combined login/registration form, defaulting to login
 
     This relies on the JS to asynchronously load the actual form from
@@ -15,7 +15,7 @@ def login_and_registration_form(request, initial_mode="login"):
     """
     # Determine the URL to redirect to following login/registration/third_party_auth
     _local_server_get('/user_api/v1/account/registration/', request.session)
-    redirect_to = get_next_url_for_login_page(request)
+    redirect_to = get_next_url_for_login_page_override(request)
     # If we're already logged in, redirect to the dashboard
     if request.user.is_authenticated():
         return redirect(redirect_to)
@@ -54,6 +54,13 @@ def login_and_registration_form(request, initial_mode="login"):
     if ext_auth_response is not None:
         return ext_auth_response
 
+    from common.djangoapps.util.philu_utils import extract_utm_params
+
+    utm_params = extract_utm_params(request.GET)
+
+    for utm_param, value in utm_params.items():
+        request.session[utm_param] = value
+
     # Otherwise, render the combined login/registration page
     context = {
         'data': {
@@ -80,6 +87,23 @@ def login_and_registration_form(request, initial_mode="login"):
             'ENABLE_COMBINED_LOGIN_REGISTRATION_FOOTER',
             settings.FEATURES['ENABLE_COMBINED_LOGIN_REGISTRATION_FOOTER']
         ),
+        'fields_to_disable': []
     }
+
+    registration_fields = context['data']['registration_form_desc']['fields']
+    registration_fields = context['data']['registration_form_desc']['fields'] = reorder_registration_form_fields(registration_fields)
+
+    if org_name and admin_email:
+        org_name = base64.b64decode(org_name)
+        admin_email = base64.b64decode(admin_email)
+
+        email_field = get_form_field_by_name(registration_fields, 'email')
+        org_field = get_form_field_by_name(registration_fields, 'organization_name')
+        is_poc_field = get_form_field_by_name(registration_fields, 'is_poc')
+        email_field['defaultValue'] = admin_email
+        org_field['defaultValue'] = org_name
+        is_poc_field['defaultValue'] = "1"
+
+        context['fields_to_disable'] = json.dumps([email_field['name'], org_field['name'], is_poc_field['name']])
 
     return render_to_response('student_account/login_and_register.html', context)

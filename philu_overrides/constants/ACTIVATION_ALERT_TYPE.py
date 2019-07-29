@@ -1,0 +1,1 @@
+ACTIVATION_ALERT_TYPE = 'activation'

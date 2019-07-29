@@ -1,6 +1,5 @@
 # edx-platform/lms/djangoapps/courseware/views/views.py
 
-# Grades can potentially be written - if so, let grading manage the transaction.
 @transaction.non_atomic_requests
 @require_POST
 def generate_user_cert(request, course_id):
@@ -33,7 +32,15 @@ def generate_user_cert(request, course_id):
             )
         )
 
+    student_id = request.POST.get('student_id')
     student = request.user
+
+    if request.user.is_staff and student_id:
+        try:
+            student = User.objects.get(id=student_id)
+        except User.DoesNotExist:
+            raise Http404
+
     course_key = CourseKey.from_string(course_id)
 
     course = modulestore().get_course(course_key, depth=2)
@@ -56,6 +63,18 @@ def generate_user_cert(request, course_id):
         # mark the certificate with "error" status, so it can be re-run
         # with a management command.  From the user's perspective,
         # it will appear that the certificate task was submitted successfully.
+        base_url = settings.LMS_ROOT_URL
+        MandrillClient().send_mail(
+            MandrillClient.COURSE_COMPLETION_TEMPLATE,
+            student.email,
+            {
+               'course_name': course.display_name,
+               'course_url': get_course_link(course_id=course.id),
+               'full_name': student.first_name + " " + student.last_name,
+               'certificate_url': base_url + get_certificate_url(user_id=student.id, course_id=course.id),
+               'course_library_url': base_url + '/courses',
+            }
+        )
         certs_api.generate_user_certificates(student, course.id, course=course, generation_mode='self')
         _track_successful_certificate_generation(student.id, course.id)
         return HttpResponse()

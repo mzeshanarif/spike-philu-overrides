@@ -8,18 +8,19 @@
         events that the user registered while enrolling in a particular course.
 
         Arguments:
-            request (HTTPRequest)
+        request (HTTPRequest)
 
         Returns:
-            HttpResponse: 200 on success
-            HttpResponse: 400 if the request is not valid.
-            HttpResponse: 409 if an account with the given username or email
-                address already exists
+        HttpResponse: 200 on success
+        HttpResponse: 400 if the request is not valid.
+        HttpResponse: 409 if an account with the given username or email
+        address already exists
         """
         data = request.POST.copy()
 
         email = data.get('email')
         username = data.get('username')
+        is_alquity_user = data.get('is_alquity_user') or False
 
         # Handle duplicate email/username
         conflicts = check_account_exists(email=email, username=username)
@@ -54,7 +55,8 @@
             data["terms_of_service"] = data["honor_code"]
 
         try:
-            user = create_account_with_params(request, data)
+            user = create_account_with_params_custom_v2(request, data, is_alquity_user)
+            self.save_user_utm_info(user)
         except ValidationError as err:
             # Should only get non-field errors from this function
             assert NON_FIELD_ERRORS not in err.message_dict
@@ -65,6 +67,7 @@
             }
             return JsonResponse(errors, status=400)
 
+        RegistrationType.objects.create(choice=2, user=request.user)
         response = JsonResponse({"success": True})
         set_logged_in_cookies(request, response, user)
         return response

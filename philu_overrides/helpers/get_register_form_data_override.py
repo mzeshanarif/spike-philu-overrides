@@ -1,13 +1,12 @@
 # edx-platform/common/djangoapps/third_party_auth/models.py
 
 
-@classmethod
-def get_register_form_data(cls, pipeline_kwargs):
+def get_register_form_data_override(pipeline_kwargs):
     """Gets dict of data to display on the register form.
 
-    common.djangoapps.student.views.register_user uses this to populate the
-    new account creation form with values supplied by the user's chosen
-    provider, preventing duplicate data entry.
+    lms.djangoapps.philu_overides.user_api.views.RegistrationViewCustom
+    uses this to populate the new account creation form with values
+    supplied by the user's chosen provider, preventing duplicate data entry.
 
     Args:
         pipeline_kwargs: dict of string -> object. Keyword arguments
@@ -32,5 +31,7 @@ def get_register_form_data(cls, pipeline_kwargs):
     return {
         'email': details.get('email', ''),
         'name': details.get('fullname', ''),
+        'last_name': details.get('last_name', ''),
+        'first_name': details.get('first_name', ''),
         'username': suggested_username,
     }

@@ -28,7 +28,7 @@
             self.field_handlers[field_name](form_desc, required=True)
 
         # Custom form fields can be added via the form set in settings.REGISTRATION_EXTENSION_FORM
-        custom_form = get_registration_extension_form()
+        custom_form = get_registration_extension_form_override()
 
         if custom_form:
             for field_name, field in custom_form.fields.items():

@@ -1,6 +1,6 @@
 # edx-platform/lms/djangoapps/branding/api.py
 
-def _footer_copyright():
+def _auth_footer_copyright():
     """Return the copyright to display in the footer.
 
     Returns: unicode

@@ -1,6 +1,6 @@
 # edx-platform/lms/djangoapps/branding/api.py
 
-def _footer_social_links():
+def _auth_footer_social_links():
     """Return the social media links to display in the footer.
 
     Returns: list

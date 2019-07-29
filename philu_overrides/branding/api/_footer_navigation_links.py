@@ -8,17 +8,12 @@ def _footer_navigation_links():
             "name": link_name,
             "title": link_title,
             "url": link_url,
+            "target": link_target,
         }
-        for link_name, link_url, link_title in [
-            ("about", marketing_link("ABOUT"), _("About")),
-            ("enterprise", marketing_link("ENTERPRISE"),
-             _("{platform_name} for Business").format(platform_name=platform_name)),
-            ("blog", marketing_link("BLOG"), _("Blog")),
-            ("news", marketing_link("NEWS"), _("News")),
-            ("help-center", settings.SUPPORT_SITE_LINK, _("Help Center")),
-            ("contact", marketing_link("CONTACT"), _("Contact")),
-            ("careers", marketing_link("CAREERS"), _("Careers")),
-            ("donate", marketing_link("DONATE"), _("Donate")),
+        for link_name, link_url, link_title, link_target in [
+            ("about", "https://philanthropyu.org/about-us/our-story/", _("About Philanthropy University"), "_blank"),
+            ("explore_course", "/courses", _("Explore our Courses"), "_self"),
+            ("communities", settings.NODEBB_ENDPOINT, _("Be part of our Communities"), "_self"),
         ]
         if link_url and link_url != "#"
     ]

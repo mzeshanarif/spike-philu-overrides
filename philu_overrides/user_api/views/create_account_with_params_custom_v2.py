@@ -1,6 +1,6 @@
 # /edx-platform/common/djangoapps/student/views.py
 
-def create_account_with_params(request, params):
+def create_account_with_params_custom_v2(request, params, is_alquity_user):
     """
     Given a request and a dict of parameters (which may or may not have come
     from the request), create an account for the requesting user, including
@@ -37,15 +37,20 @@ def create_account_with_params(request, params):
         getattr(settings, 'REGISTRATION_EXTRA_FIELDS', {})
     )
 
+    if third_party_auth.is_enabled() and pipeline.running(request):
+        running_pipeline = pipeline.get(request)
+
+        if running_pipeline.get('backend'):
+            params['provider'] = running_pipeline.get('backend')
+
+        params['access_token'] = running_pipeline['kwargs']['response']['access_token']
+
     # Boolean of whether a 3rd party auth provider and credentials were provided in
     # the API so the newly created account can link with the 3rd party account.
     #
     # Note: this is orthogonal to the 3rd party authentication pipeline that occurs
     # when the account is created via the browser and redirect URLs.
     should_link_with_social_auth = third_party_auth.is_enabled() and 'provider' in params
-
-    if should_link_with_social_auth or (third_party_auth.is_enabled() and pipeline.running(request)):
-        params["password"] = pipeline.make_random_password()
 
     # Add a form requirement for data sharing consent if the EnterpriseCustomer
     # for the request requires it at login
@@ -85,7 +90,10 @@ def create_account_with_params(request, params):
         not eamap.external_domain.startswith(openedx.core.djangoapps.external_auth.views.SHIBBOLETH_DOMAIN_PREFIX)
     )
 
-    params['name'] = "{} {}".format(params.get('first_name'), params.get('last_name'))
+    params['name'] = "{} {}".format(
+        params.get('first_name', '').encode('utf-8'), params.get('last_name', '').encode('utf-8')
+    )
+
     form = AccountCreationForm(
         data=params,
         extra_fields=extra_fields,
@@ -94,12 +102,12 @@ def create_account_with_params(request, params):
         enforce_password_policy=enforce_password_policy,
         tos_required=tos_required,
     )
-    custom_form = get_registration_extension_form(data=params)
+    custom_form = get_registration_extension_form_override(data=params)
 
     # Perform operations within a transaction that are critical to account creation
     with transaction.atomic():
         # first, create the account
-        (user, profile, registration) = _do_create_account(form, custom_form)
+        (user, profile, registration) = _do_create_account_custom_v2(form, custom_form, is_alquity_user=is_alquity_user)
 
         # next, link the account with social auth, if provided via the API.
         # (If the user is using the normal register page, the social auth pipeline does the linking, not this code)
@@ -223,30 +231,12 @@ def create_account_with_params(request, params):
         )
     )
     if send_email:
-        dest_addr = user.email
-        context = {
-            'name': profile.name,
-            'key': registration.activation_key,
-        }
-
-        # composes activation email
-        subject = render_to_string('emails/activation_email_subject.txt', context)
-        # Email subject *must not* contain newlines
-        subject = ''.join(subject.splitlines())
-        message = render_to_string('emails/activation_email.txt', context)
-
-        from_address = configuration_helpers.get_value(
-            'email_from_address',
-            settings.DEFAULT_FROM_EMAIL
-        )
-        if settings.FEATURES.get('REROUTE_ACTIVATION_EMAIL'):
-            dest_addr = settings.FEATURES['REROUTE_ACTIVATION_EMAIL']
-            message = ("Activation for %s (%s): %s\n" % (user, user.email, profile.name) +
-                       '-' * 80 + '\n\n' + message)
-        send_activation_email.delay(subject, message, from_address, dest_addr)
+        data = get_params_for_activation_email(request, registration, user)
+        task_send_account_activation_email.delay(data)
     else:
         registration.activate()
-        _enroll_user_in_pending_courses(user)  # Enroll student in any pending courses
+        data = {'user_id': user.id}
+        task_enroll_user_in_pending_courses.delay(data)  # Enroll student in any pending courses
 
     # Immediately after a user creates an account, we log them in. They are only
     # logged in until they close the browser. They can't log in again until they click

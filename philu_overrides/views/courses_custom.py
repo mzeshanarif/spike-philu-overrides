@@ -2,7 +2,7 @@
 
 @ensure_csrf_cookie
 @cache_if_anonymous()
-def courses(request):
+def courses_custom(request):
     """
     Render "find courses" page.  The course selection work is done in courseware.courses.
     """
@@ -10,7 +10,8 @@ def courses(request):
     programs_list = []
     course_discovery_meanings = getattr(settings, 'COURSE_DISCOVERY_MEANINGS', {})
     if not settings.FEATURES.get('ENABLE_COURSE_DISCOVERY'):
-        courses_list = get_courses(request.user)
+        current_date = datetime.now(utc)
+        courses_list = get_courses(request.user, filter_={'end__isnull': False}, exclude_={'end__lte': current_date})
 
         if configuration_helpers.get_value("ENABLE_COURSE_SORTING_BY_START_DATE",
                                            settings.FEATURES["ENABLE_COURSE_SORTING_BY_START_DATE"]):
@@ -28,6 +29,29 @@ def courses(request):
 
     if request.user.is_authenticated():
         add_tag_to_enrolled_courses(request.user, courses_list)
+
+    for course in courses_list:
+        course_key = SlashSeparatedCourseKey.from_deprecated_string(
+            course.id.to_deprecated_string())
+        with modulestore().bulk_operations(course_key):
+            if has_access(request.user, 'load', course):
+                access_link = get_last_accessed_courseware(
+                    get_course_by_id(course_key, 0),
+                    request,
+                    request.user
+                )
+
+                first_chapter_url, first_section = get_course_related_keys(
+                    request, get_course_by_id(course_key, 0))
+                first_target = reverse('courseware_section', args=[
+                    course.id.to_deprecated_string(),
+                    first_chapter_url,
+                    first_section
+                ])
+
+                course.course_target = access_link if access_link != None else first_target
+            else:
+                course.course_target = '/courses/' + course.id.to_deprecated_string()
 
     return render_to_response(
         "courseware/courses.html",

@@ -1,6 +1,6 @@
 # /edx-platform/common/djangoapps/student/views.py
 
-def _do_create_account(form, custom_form=None):
+def _do_create_account_custom(form, custom_form=None, is_alquity_user=False):
     """
     Given cleaned post variables, create the User and UserProfile objects, as well as the
     registration for this user.
@@ -30,9 +30,15 @@ def _do_create_account(form, custom_form=None):
     try:
         with transaction.atomic():
             user.save()
-            if custom_form:
-                custom_model = custom_form.save(user=user, commit=True)
+            custom_model = custom_form.save(user=user, commit=True, is_alquity_user=is_alquity_user)
 
+        # Fix: recall user.save to avoid transaction management related exception,
+        # if we call user.save under atomic block
+        # (in custom_from.save )a random transaction exception generated
+        if custom_model.organization:
+            custom_model.organization.save()
+
+        user.save()
     except IntegrityError:
         # Figure out the cause of the integrity error
         if len(User.objects.filter(username=user.username)) > 0:

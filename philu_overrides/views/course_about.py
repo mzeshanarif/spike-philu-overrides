@@ -1,13 +1,36 @@
 # /edx-platform/lms/djangoapps/courseware/views/views.py
 
 @ensure_csrf_cookie
-@cache_if_anonymous()
+@cache_if_anonymous('share_after_enroll',)
 def course_about(request, course_id):
     """
     Display the course's about page.
 
     Assumes the course_id is in a valid format.
     """
+
+    import urllib
+    from openedx.core.djangoapps.content.course_overviews.models import CourseOverview
+    from util.milestones_helpers import get_prerequisite_courses_display
+    from openedx.core.djangoapps.models.course_details import CourseDetails
+    from commerce.utils import EcommerceService
+    from course_modes.models import CourseMode
+    from lms.djangoapps.courseware.access_utils import ACCESS_DENIED
+    from lms.djangoapps.courseware.views.views import registered_for_course, get_cosmetic_display_price
+    from lms.djangoapps.courseware.courses import (
+        get_courses,
+        get_permission_for_course_about,
+        get_course_overview_with_access,
+        get_course_with_access,
+        get_studio_url,
+        sort_by_start_date,
+        get_course_by_id,
+        sort_by_announcement
+    )
+    from lms.envs.common import DEFAULT_IMAGE_NAME
+    import shoppingcart
+    from shoppingcart.utils import is_shopping_cart_enabled
+    from openedx.core.djangoapps.coursetalk.helpers import inject_coursetalk_keys_into_context
 
     course_key = SlashSeparatedCourseKey.from_deprecated_string(course_id)
 
@@ -19,35 +42,20 @@ def course_about(request, course_id):
         return redirect(reverse('dashboard'))
 
     with modulestore().bulk_operations(course_key):
-        permission = get_permission_for_course_about()
-        course = get_course_with_access(request.user, permission, course_key)
-        course_details = CourseDetails.populate(course)
+        course = get_course_by_id(course_key)
         modes = CourseMode.modes_for_course_dict(course_key)
 
         if configuration_helpers.get_value('ENABLE_MKTG_SITE', settings.FEATURES.get('ENABLE_MKTG_SITE', False)):
             return redirect(reverse('info', args=[course.id.to_deprecated_string()]))
 
-        registered = registered_for_course(course, request.user)
-
         staff_access = bool(has_access(request.user, 'staff', course))
         studio_url = get_studio_url(course, 'settings/details')
 
-        if has_access(request.user, 'load', course):
-            first_chapter_url, first_section = get_course_related_keys(request, course)
-            course_target = reverse('courseware_section', args=[course.id.to_deprecated_string(), first_chapter_url,
-                                                                first_section])
-        else:
-            course_target = reverse('about_course', args=[course.id.to_deprecated_string()])
-
-        show_courseware_link = bool(
-            (
-                has_access(request.user, 'load', course) and
-                has_access(request.user, 'view_courseware_with_prerequisites', course)
-            ) or settings.FEATURES.get('ENABLE_LMS_MIGRATION')
-        )
+        if not staff_access and course.invitation_only and not CourseEnrollment.is_enrolled(request.user, course.id):
+            raise Http404("Course not accessible: {}.".format(unicode(course.id)))
 
         # Note: this is a flow for payment for course registration, not the Verified Certificate flow.
-        in_cart = False
+        # in_cart = False
         reg_then_add_to_cart_link = ""
 
         _is_shopping_cart_enabled = is_shopping_cart_enabled()
@@ -67,8 +75,8 @@ def course_about(request, course_id):
         ecomm_service = EcommerceService()
         ecommerce_checkout = ecomm_service.is_enabled(request.user)
         ecommerce_checkout_link = ''
-        ecommerce_bulk_checkout_link = ''
-        professional_mode = None
+        # ecommerce_bulk_checkout_link = ''
+        # professional_mode = None
         is_professional_mode = CourseMode.PROFESSIONAL in modes or CourseMode.NO_ID_PROFESSIONAL_MODE in modes
         if ecommerce_checkout and is_professional_mode:
             professional_mode = modes.get(CourseMode.PROFESSIONAL, '') or \
@@ -88,18 +96,7 @@ def course_about(request, course_id):
         # Determine which checkout workflow to use -- LMS shoppingcart or Otto basket
         can_add_course_to_cart = _is_shopping_cart_enabled and registration_price and not ecommerce_checkout_link
 
-        # Used to provide context to message to student if enrollment not allowed
-        can_enroll = bool(has_access(request.user, 'enroll', course))
         invitation_only = course.invitation_only
-        is_course_full = CourseEnrollment.objects.is_course_full(course)
-
-        # Register button should be disabled if one of the following is true:
-        # - Student is already registered for course
-        # - Course is already full
-        # - Student cannot enroll in course
-        active_reg_button = not(registered or is_course_full or not can_enroll)
-
-        is_shib_course = uses_shib(course)
 
         # get prerequisite courses display names
         pre_requisite_courses = get_prerequisite_courses_display(course)
@@ -107,27 +104,59 @@ def course_about(request, course_id):
         # Overview
         overview = CourseOverview.get_from_id(course.id)
 
+        course_next_classes = get_course_next_classes(request, course)
+        current_class, user_current_enrolled_class, current_enrolled_class_target = get_user_current_enrolled_class(
+            request, course)
+        can_enroll = _can_enroll_courselike(request.user, current_class) if current_class else ACCESS_DENIED
+
+        if current_class:
+            if isinstance(current_class, CourseOverview):
+                course_open_date = current_class.course_open_date
+                current_class = get_course_by_id(current_class.id)
+                current_class.course_open_date = course_open_date
+
+            course_details = CourseDetails.populate(current_class)
+        else:
+            course_details = CourseDetails.populate(course)
+
+        is_enrolled_in_any_class = is_user_enrolled_in_any_class(user_current_enrolled_class, course_next_classes)
+        # Alquity specific check
+        is_alquity = True if request.GET.get('ref') == 'alquity' else False
+
+        custom_settings = get_course_custom_settings(course.id)
+        meta_tags = custom_settings.get_course_meta_tags()
+
+        meta_tags['description'] = meta_tags['description'] or course_details.short_description
+        meta_tags['og:description'] = meta_tags['description']
+
+        meta_tags['title'] = meta_tags['title'] or course_details.title or course.display_name
+        meta_tags['og:title'] = meta_tags['title']
+        meta_tags['addthis:title'] = ENROLL_SHARE_TITLE_FORMAT.format(course.display_name)
+
+        if request.GET.get('share_after_enroll') == 'true':
+            meta_tags['og:title'] = 'Join me in this free online course.'
+            meta_tags['og:description'] = ENROLL_SHARE_DESC_FORMAT.format(course.display_name)
+
+        if course_details.banner_image_name != DEFAULT_IMAGE_NAME:
+            meta_tags['image'] = settings.LMS_ROOT_URL + course_details.banner_image_asset_path
+
+        social_sharing_urls = get_social_sharing_urls(url_query_cleaner(request.build_absolute_uri()), meta_tags)
+
         context = {
             'course': course,
             'course_details': course_details,
+            'course_next_classes': course_next_classes,
+            'current_class': current_class,
+            'can_user_enroll': can_enroll.has_access,
+            'user_current_enrolled_class': user_current_enrolled_class,
+            'is_user_enrolled_in_any_class': is_enrolled_in_any_class,
+            'current_enrolled_class_target': current_enrolled_class_target,
             'staff_access': staff_access,
             'studio_url': studio_url,
-            'registered': registered,
-            'course_target': course_target,
             'is_cosmetic_price_enabled': settings.FEATURES.get('ENABLE_COSMETIC_DISPLAY_PRICE'),
             'course_price': course_price,
-            'in_cart': in_cart,
-            'ecommerce_checkout': ecommerce_checkout,
-            'ecommerce_checkout_link': ecommerce_checkout_link,
-            'ecommerce_bulk_checkout_link': ecommerce_bulk_checkout_link,
-            'professional_mode': professional_mode,
             'reg_then_add_to_cart_link': reg_then_add_to_cart_link,
-            'show_courseware_link': show_courseware_link,
-            'is_course_full': is_course_full,
-            'can_enroll': can_enroll,
             'invitation_only': invitation_only,
-            'active_reg_button': active_reg_button,
-            'is_shib_course': is_shib_course,
             # We do not want to display the internal courseware header, which is used when the course is found in the
             # context. This value is therefor explicitly set to render the appropriate header.
             'disable_courseware_header': True,
@@ -135,6 +164,10 @@ def course_about(request, course_id):
             'cart_link': reverse('shoppingcart.views.show_cart'),
             'pre_requisite_courses': pre_requisite_courses,
             'course_image_urls': overview.image_urls,
+            'meta_tags': meta_tags,
+            'is_alquity': is_alquity,
+            'social_sharing_urls': social_sharing_urls,
+            'org_survey_status': user_org_survey_completion_status(request.user)
         }
         inject_coursetalk_keys_into_context(context, course_key)
 

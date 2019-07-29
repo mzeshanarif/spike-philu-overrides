@@ -2,7 +2,7 @@
 
 # Need different levels of logging
 @ensure_csrf_cookie
-def login_user(request, error=""):  # pylint: disable=too-many-statements,unused-argument
+def login_user_custom(request, error=""):  # pylint: disable=too-many-statements,unused-argument
     """AJAX request to log in the user."""
 
     backend_name = None
@@ -220,7 +220,7 @@ def login_user(request, error=""):  # pylint: disable=too-many-statements,unused
     else:
         AUDIT_LOG.warning(u"Login failed - Account not active for user {0}, resending activation".format(username))
 
-    reactivation_email_for_user(user)
+    reactivation_email_for_user_custom(request, user)
     not_activated_msg = _("Before you sign in, you need to activate your account. We have sent you an "
                           "email message with instructions for activating your account.")
     return JsonResponse({

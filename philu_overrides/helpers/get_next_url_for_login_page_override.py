@@ -1,7 +1,8 @@
 # edx-platform/common/djangoapps/student/helpers.py
 
-def get_next_url_for_login_page(request):
+def get_next_url_for_login_page_override(request):
     """
+    NOTE*: We override this method to tackle alquity redirection scenarios
     Determine the URL to redirect to following login/registration/third_party_auth
 
     The user is currently on a login or registration page.
@@ -12,7 +13,25 @@ def get_next_url_for_login_page(request):
     Otherwise, we go to the ?next= query param or to the dashboard if nothing else is
     specified.
     """
+    import urllib
+    from django.core.urlresolvers import reverse, NoReverseMatch
+    from django.utils import http
+    from lms.djangoapps.onboarding.helpers import get_alquity_community_url
+    import logging
+    log = logging.getLogger(__name__)
+
     redirect_to = request.GET.get('next', None)
+
+    # sanity checks for alquity specific users
+    if redirect_to == 'alquity' and request.path == '/register':
+        if request.user.is_authenticated():
+            return get_alquity_community_url()
+        return reverse('dashboard')
+
+    if redirect_to == 'alquity' and request.path == '/login':
+        return get_alquity_community_url()
+
+
     # if we get a redirect parameter, make sure it's safe. If it's not, drop the
     # parameter.
     if redirect_to and not http.is_safe_url(redirect_to):
